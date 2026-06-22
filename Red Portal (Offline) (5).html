@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Red Portal | File Edition</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      background: #0a0a0a;
+      color: #ff3c3c;
+      font-family: 'Courier New', Courier, monospace;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      text-transform: uppercase;
+    }
+
+    .launcher-container {
+      border: 2px solid #ff3c3c;
+      padding: 4rem 6rem;
+      background: #1a1a1a;
+      box-shadow: 0 0 20px rgba(255, 60, 60, 0.3);
+    }
+
+    h1 { font-size: 3rem; margin: 0; letter-spacing: 4px; }
+    h2 { font-size: 1.5rem; color: #888; margin: 0 0 4rem 0; opacity: 0.7; letter-spacing: 2px; }
+
+    .launcher-input {
+      font-family: inherit;
+      padding: 0.8rem 1.5rem;
+      border: none;
+      background: #1a1a1a;
+      border: 1px solid #444;
+      color: #ff3c3c;
+      margin-right: 10px;
+    }
+
+    .launcher-btn {
+      font-size: 1rem;
+      padding: 0.8rem 2rem;
+      background: #ff3c3c;
+      color: black;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    #launcher-message { color: white; margin-left: 15px; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="launcher-container">
+    <h1>Red Portal</h1>
+    <h2>File Edition</h2>
+    <form onsubmit="handleLauncherSubmit(event)">
+      <button class="launcher-btn" type="submit">INITIALIZE</button>
+      <span id="launcher-message"></span>
+    </form>
+  </div>
+
+  <script>
+    const TARGET_URL = "https://redportal.dpdns.org/";
+    const ASSETS_TO_INLINE = [
+      "assets/logo/logo.png", "assets/intro/Red-Intro.gif", "assets/themes/Default.PNG",
+      "assets/themes/The_Portal_Wallpaper_Not_Merged.png", "assets/themes/rain.gif",
+      "assets/themes/summer.png", "assets/themes/A_Safe_Landing.jpeg", "assets/themes/car.gif",
+      "assets/themes/wii-donut.gif", "assets/themes/circles.gif", "assets/themes/aspin.jpg",
+      "assets/themes/Cracked.png", "assets/HELP_BRING_BACK.png",
+    ];
+
+    async function fetchAsDataUri(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Asset fetch failed (${res.status}): ${url}`);
+      const blob = await res.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("FileReader failed for: " + url));
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    function escapeRegExp(string) { return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+    function inlineAsset(html, assetPath, dataUri) {
+      const cleanBase = TARGET_URL.replace(/\/$/, "");
+      const escapedPath = escapeRegExp(assetPath);
+      const escapedFull = escapeRegExp(cleanBase + "/" + assetPath);
+      html = html.replace(new RegExp(`src="${escapedPath}"`, 'g'), `src="${dataUri}"`);
+      html = html.replace(new RegExp(`src="/${escapedPath}"`, 'g'), `src="${dataUri}"`);
+      html = html.replace(new RegExp(`src="${escapedFull}"`, 'g'), `src="${dataUri}"`);
+      html = html.replace(new RegExp(`'${assetPath}'`, 'g'), `'${dataUri}'`);
+      html = html.replace(new RegExp(`"${assetPath}"`, 'g'), `"${dataUri}"`);
+      return html;
+    }
+
+    function makeSelfContained(html, baseUrl, inlinedAssets) {
+      const cleanBaseUrl = baseUrl.replace(/\/$/, "");
+      const escapedUrl = escapeRegExp(cleanBaseUrl);
+      for (const [assetPath, dataUri] of Object.entries(inlinedAssets)) { html = inlineAsset(html, assetPath, dataUri); }
+      html = html.replace(/<head[^>]*>/i, match => `${match}<base href="${cleanBaseUrl}/">`);
+      const hrefRegex = new RegExp(`href="${escapedUrl}(\\/[^"]*)"`, 'g');
+      html = html.replace(hrefRegex, 'href="$1"');
+      const actionRegex = new RegExp(`action="${escapedUrl}(\\/[^"]*)"`, 'g');
+      html = html.replace(actionRegex, 'action="$1"');
+
+      const closeTag = "<" + "/script>";
+      const sandboxScript = `<script>
+        const INJECTED_URL = "${cleanBaseUrl}";
+        window.open = function(url, target) {
+          if (url && url.startsWith(INJECTED_URL)) return location.href = url.replace(INJECTED_URL, '');
+          return window.__realOpen || window.open)(url, target);
+        };
+        let realAssign = window.location.assign;
+        window.location.assign = function(url) {
+          if (url && url.startsWith(INJECTED_URL + '/')) return location.href = url.replace(INJECTED_URL + '/', '');
+          realAssign.call(window.location, url);
+        };
+      ${closeTag}`;
+
+      const lastBodyIdx = html.lastIndexOf('</body>');
+      if (lastBodyIdx !== -1) {
+        html = html.slice(0, lastBodyIdx) + sandboxScript + '</body>' + html.slice(lastBodyIdx + 7);
+      } else if ((lastHtmlIdx = html.lastIndexOf('</html>')) !== -1) {
+        html = html.slice(0, lastHtmlIdx) + sandboxScript + '</html>' + html.slice(lastHtmlIdx + 7);
+      } else {
+        html += sandboxScript;
+      }
+      return html;
+    }
+
+    async function handleLauncherSubmit(e) {
+      e.preventDefault();
+      const msg = document.getElementById('launcher-message');
+      msg.textContent = "INITIALIZING...";
+      try {
+        const baseUrl = TARGET_URL.replace(/\/$/, "");
+        const fetchUrl = baseUrl + '/';
+        const win = window.open('about:blank');
+        if (!win) msg.textContent = "POPUP BLOCKED";
+
+        const [htmlRes, ...assetResults] = await Promise.all([
+          fetch(fetchUrl).then(res => { if (!res.ok) throw new Error('Fetch failed.'); return res.text(); }),
+          ...ASSETS_TO_INLINE.map(assetPath => fetchAsDataUri(`${baseUrl}/${assetPath}`).then(dataUri => ({ assetPath, dataUri })))
+        ]);
+
+        const inlinedAssets = {};
+        for (const result of assetResults) if (result.dataUri) inlinedAssets[result.assetPath] = result.dataUri;
+        win.location = URL.createObjectURL(new Blob([makeSelfContained(htmlRes, TARGET_URL, inlinedAssets)], { type: "text/html" }));
+        msg.textContent = "";
+      } catch (err) {
+        if (win) win.document.open();
+        win.document.write(`<h1>ERROR</h1><pre>${err.message}</pre>`);
+        win.document.close();
+        msg.textContent = err.message;
+      }
+    }
+  </script>
+</body>
